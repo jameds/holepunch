@@ -1,0 +1,7 @@
+Bird's Hole Punching Protocol.
+
+This program is the author's implementation of that
+protocol.
+
+You may change some settings, such as the listening port,
+by modifying config.h
