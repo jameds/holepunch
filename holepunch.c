@@ -41,6 +41,10 @@ POSSIBILITY OF SUCH DAMAGE.
 extern const char _binary_NOTICE_start[];
 extern const char _binary_NOTICE_size[];
 
+/* git commit to string */
+#define TOSTR2(x) #x
+#define TOSTR(x) TOSTR2(x)
+
 const char magic[4] = { 0x00, 0x52, 0xEB, 0x11 };
 
 int fd;/* listening socket */
@@ -197,8 +201,9 @@ main
 	printf(
 			"%.*s\n"
 			"Bound to port %d.\n"
+			"Git rev. %s\n",
 			(unsigned long)_binary_NOTICE_size,
-			_binary_NOTICE_start, PORT);
+			_binary_NOTICE_start, PORT, TOSTR (COMMIT));
 
 	do
 		incoming();

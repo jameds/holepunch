@@ -1,4 +1,5 @@
 CFLAGS+=-fpic
+CPPFLAGS+=-DCOMMIT=`git show-ref -s --abbrev`
 
 all : holepunch
 
