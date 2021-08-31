@@ -162,9 +162,9 @@ relay (void)
 
 	addr = end;
 
-	outgoing(10);
-
 	printf(" %s\n", address_string());
+
+	outgoing(10);
 }
 
 /* returns number of bytes (of valid packet) */
