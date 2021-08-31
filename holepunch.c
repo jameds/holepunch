@@ -198,6 +198,9 @@ main
 {
 	create_socket();
 
+	/* line buffer stdout (for journal) */
+	setvbuf(stdout, NULL, _IOLBF, 0);
+
 	printf(
 			"%.*s\n"
 			"Bound to port %d.\n"
