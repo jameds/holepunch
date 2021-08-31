@@ -67,7 +67,7 @@ is_external_address (const void *p)
 	const int a = ((const unsigned char*)p)[0];
 	const int b = ((const unsigned char*)p)[1];
 
-	if (*(int*)p == ~0)/* 255.255.255.255 */
+	if (*(const int*)p == ~0)/* 255.255.255.255 */
 		return 0;
 
 	switch (a)
@@ -202,7 +202,7 @@ main
 			"%.*s\n"
 			"Bound to port %d.\n"
 			"Git rev. %s\n",
-			(unsigned long)_binary_NOTICE_size,
+			(int)(unsigned long)_binary_NOTICE_size,
 			_binary_NOTICE_start, PORT, TOSTR (COMMIT));
 
 	do
