@@ -105,7 +105,7 @@ is_external_address6 (const void *p)
 	switch (a)
 	{
 		case 0xfc:/* fc::/7 */
-		case 0xfc:
+		case 0xfd:
 			return 0;
 		case 0:/* :: */
 		case 1:/* ::1 */
