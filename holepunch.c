@@ -314,8 +314,6 @@ main
 			perror_here("select");
 		else
 		{
-			puts("HI");
-
 			if (FD_ISSET(fd4, &rfds))
 				incoming(fd4, 10);
 
