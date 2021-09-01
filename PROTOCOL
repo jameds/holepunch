@@ -1,4 +1,4 @@
-             Bird's Hole Punching Protocol
+             Bird's Hole Punching Protocol     31 Aug 2021
 
 
 Hole punch - a mechanism to bypass a firewall
@@ -6,6 +6,7 @@ Server     - a third party which is not behind a firewall
 Client     - anything contacting the server
 Magic      - the four bytes 00 52 EB 11
 Address    - an IPv4 address
+Address6   - an IPv6 address
 
 
                   0 1 2 3 4 5 6 7 8  9
@@ -13,6 +14,13 @@ Address    - an IPv4 address
                  | Magic |Address|Port|
                  +-------+-------+----+
                       Relay Packet
+
+                           1                   2
+       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0  1
+      +-------+-------------------------------+----+
+      | Magic |            Address6           |Port|
+      +-------+-------------------------------+----+
+                    IPv6 Relay Packet
 
 
 A client that expects to be the target of a hole punch

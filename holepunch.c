@@ -32,6 +32,7 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -47,10 +48,20 @@ extern const char _binary_NOTICE_size[];
 
 const char magic[4] = { 0x00, 0x52, 0xEB, 0x11 };
 
-int fd;/* listening socket */
+int fd4;/* listening socket - IPv4 */
+int fd6;/* IPv6 */
 
-char buffer[10];
-struct sockaddr_in addr;
+char buffer[22];
+
+int packet;
+
+#define is_v4() (packet == 10)
+
+union sockaddr_munge {
+	struct sockaddr sa;
+	struct sockaddr_in sin;
+	struct sockaddr_in6 sin6;
+} addr;
 
 /* report line number */
 #define report(l) \
@@ -62,7 +73,7 @@ struct sockaddr_in addr;
 
 /* not one of the reserved "local" addresses */
 int
-is_external_address (const void *p)
+is_external_address4 (const void *p)
 {
 	const int a = ((const unsigned char*)p)[0];
 	const int b = ((const unsigned char*)p)[1];
@@ -85,22 +96,74 @@ is_external_address (const void *p)
 	}
 }
 
+int
+is_external_address6 (const void *p)
+{
+	const int a = ((const unsigned char*)p)[0];
+	char s[15] = {0};
+
+	switch (a)
+	{
+		case 0xfc:/* fc::/7 */
+		case 0xfc:
+			return 0;
+		case 0:/* :: */
+		case 1:/* ::1 */
+			return memcmp(&((const char*)p)[1], s, 15);
+		default:
+			return 1;
+	}
+}
+
+int
+is_external_address (const void *p)
+{
+	return is_v4() ?
+		is_external_address4(p) :
+		is_external_address6(p);
+}
+
+const void *
+get_address (void)
+{
+	return is_v4() ?
+		(void*)&addr.sin.sin_addr :
+		(void*)&addr.sin6.sin6_addr;
+}
+
 char *
 address_string (void)
 {
-	static char str[sizeof "255.255.255.255p65535"];
-	inet_ntop(AF_INET, &addr.sin_addr, str, sizeof str);
-	sprintf(&str[strlen(str)], "p%d",
-			ntohs(addr.sin_port));
+	static char str[INET6_ADDRSTRLEN + sizeof "65535"];
+
+	inet_ntop(addr.sa.sa_family,
+			get_address(), str, sizeof str);
+
+	sprintf(&str[strlen(str)], "p%d", ntohs(is_v4() ?
+				addr.sin.sin_port : addr.sin6.sin6_port));
+
 	return str;
 }
 
 void
-create_socket (void)
+set_v6only (int fd)
 {
-	struct sockaddr_in end;
+	int n = 1;
 
-	fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY,
+				&n, sizeof n) == -1)
+	{
+		perror_here("setsockopt");
+		exit(1);
+	}
+}
+
+int
+create_socket (int family)
+{
+	union sockaddr_munge end;
+
+	int fd = socket(family, SOCK_DGRAM, IPPROTO_UDP);
 
 	if (fd == -1)
 	{
@@ -108,26 +171,41 @@ create_socket (void)
 		exit(1);
 	}
 
-	end.sin_family = AF_INET;
-	end.sin_port = htons(PORT);
-	end.sin_addr.s_addr = INADDR_ANY;/* 0.0.0.0 */
+	end.sa.sa_family = family;
 
-	if (bind(fd, (struct sockaddr*)&end, sizeof end) == -1)
+	if (family == AF_INET)
+	{
+		end.sin.sin_port = htons(PORT);
+		end.sin.sin_addr.s_addr = INADDR_ANY;/* 0.0.0.0 */
+	}
+	else/* IPv6 */
+	{
+		end.sin6.sin6_port = htons(PORT);
+		end.sin6.sin6_addr = in6addr_any;/* :: */
+
+		/* restrict socket to ipv6 traffic only, this is
+			required for dual stack networking */
+		set_v6only(fd);
+	}
+
+	if (bind(fd, &end.sa, sizeof end) == -1)
 	{
 		perror_here("bind");
 		exit(1);
 	}
+
+	return fd;
 }
 
 void
 outgoing
-(		int n,
+(		int fd,
 		int line)
 {
-	int c = sendto(fd, buffer, n, 0,
-			(struct sockaddr*)&addr, sizeof addr);
+	int c = sendto(fd, buffer, packet, 0,
+			&addr.sa, sizeof addr);
 
-	if (c < n)
+	if (c < packet)
 	{
 		if (c == -1)
 		{
@@ -138,7 +216,7 @@ outgoing
 			report(line);
 			fprintf(stderr,
 					"(WEIRD) sendto sent less bytes"
-					" (%d < %d)\n", c, n);
+					" (%d < %d)\n", c, packet);
 		}
 	}
 }
@@ -147,48 +225,59 @@ outgoing
 
 /* request hole punch */
 void
-relay (void)
+relay (int fd)
 {
-	struct sockaddr_in end;
-
-	end.sin_family = AF_INET;
-	end.sin_addr.s_addr = *(int*)&buffer[4];
-	end.sin_port = *(short*)&buffer[8];
-
-	*(int*)&buffer[4] = addr.sin_addr.s_addr;
-	*(short*)&buffer[8] = addr.sin_port;
+	union sockaddr_munge end;
 
 	printf("%s ->", address_string());
+
+	end.sa.sa_family = AF_INET;
+
+	if (is_v4())
+	{
+		end.sin.sin_addr.s_addr = *(int*)&buffer[4];
+		end.sin.sin_port = *(short*)&buffer[8];
+
+		*(int*)&buffer[4] = addr.sin.sin_addr.s_addr;
+		*(short*)&buffer[8] = addr.sin.sin_port;
+	}
+	else
+	{
+		end.sin6.sin6_addr = *(struct in6_addr*)&buffer[4];
+		end.sin6.sin6_port = *(short*)&buffer[20];
+
+		*(struct in6_addr*)&buffer[4] = addr.sin6.sin6_addr;
+		*(short*)&buffer[20] = addr.sin6.sin6_port;
+	}
 
 	addr = end;
 
 	printf(" %s\n", address_string());
 
-	outgoing(10);
+	outgoing(fd);
 }
 
-/* returns number of bytes (of valid packet) */
-int
-incoming (void)
+void
+incoming
+(		int fd,
+		int n)
 {
-	socklen_t addr_size;
+	socklen_t addr_size = sizeof addr;
 
-	int n;
+	packet = recvfrom(fd, buffer, n, 0,
+			&addr.sa, &addr_size);
 
-	while ((n = recvfrom(fd, buffer, 10, 0,
-					(struct sockaddr*)&addr,
-					(addr_size = sizeof addr, &addr_size)))
-			!= -1)
+	if (packet == n)
 	{
-		if (n == 10 && *(int*)buffer == *(int*)magic &&
-				is_external_address(&addr.sin_addr) &&
+		if (*(int*)buffer == *(int*)magic &&
+				is_external_address(get_address()) &&
 				is_external_address(&buffer[4]))
 		{
-			relay();
+			relay(fd);
 		}
 	}
-
-	perror_here("recvfrom");
+	else if (packet == -1)
+		perror_here("recvfrom");
 }
 
 int
@@ -196,19 +285,43 @@ main
 (		int ac,
 		char ** av)
 {
-	create_socket();
+	fd_set rfds;
+
+	puts("Binding IPv4 socket...");
+	fd4 = create_socket(AF_INET);
+
+	puts("Binding IPv6 socket...");
+	fd6 = create_socket(AF_INET6);
 
 	/* line buffer stdout (for journal) */
 	setvbuf(stdout, NULL, _IOLBF, 0);
 
 	printf(
-			"%.*s\n"
+			"\n%.*s\n"
 			"Bound to port %d.\n"
 			"Git rev. %s\n",
 			(int)(unsigned long)_binary_NOTICE_size,
 			_binary_NOTICE_start, PORT, TOSTR (COMMIT));
 
+	FD_ZERO (&rfds);
+
 	do
-		incoming();
+	{
+		FD_SET (fd4, &rfds);
+		FD_SET (fd6, &rfds);
+
+		if (select(fd6 + 1, &rfds, NULL, NULL, NULL) == -1)
+			perror_here("select");
+		else
+		{
+			puts("HI");
+
+			if (FD_ISSET(fd4, &rfds))
+				incoming(fd4, 10);
+
+			if (FD_ISSET(fd6, &rfds))
+				incoming(fd6, 22);
+		}
+	}
 	while (1);
 }
